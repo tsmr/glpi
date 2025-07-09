@@ -43,5 +43,8 @@
 
       {{ fields.smallTitle(__('In groups')) }}
       {{ fields.textField('ldap_group_dn', item.fields['ldap_group_dn'], __('Group DN')) }}
+
+       {{ fields.smallTitle(__('Synchronization')) }}
+       {{ fields.textField('sync_field_group', item.fields['sync_field_group'], __('Synchronization field')) }}
    {% endblock %}
 {% endblock %}

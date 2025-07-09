@@ -48,4 +48,5 @@
 
     {{ fields.textField('group_member_field', item.fields['group_member_field'], __('Group attribute containing its users')) }}
     {{ fields.dropdownYesNo('use_dn', item.fields['use_dn'], __('Use DN in the search')) }}
+    {{ fields.textField('sync_field_group', item.fields['sync_field_group'], __('Synchronization field')) }}
 {% endblock %}

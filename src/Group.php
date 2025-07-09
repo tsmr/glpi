@@ -360,6 +360,14 @@ class Group extends CommonTreeDropdown
                 'name'               => __('Group DN'),
                 'datatype'           => 'text',
             ];
+
+            $tab[] = [
+                'id'                 => '6',
+                'table'              => $this->getTable(),
+                'field'              => 'sync_field_group',
+                'name'               => __('Synchronization field'),
+                'datatype'           => 'text',
+            ];
         }
 
         $tab[] = [

@@ -8,7 +8,6 @@
  * http://glpi-project.org
  *
  * @copyright 2015-2025 Teclib' and contributors.
- * @copyright 2003-2014 by the INDEPNET Development Team.
  * @licence   https://www.gnu.org/licenses/gpl-3.0.html
  *
  * ---------------------------------------------------------------------
@@ -33,30 +32,16 @@
  * ---------------------------------------------------------------------
  */
 
-require_once(__DIR__ . '/_check_webserver_config.php');
+/**
+ * @var \DBmysql $DB
+ * @var \Migration $migration
+ */
 
-Session::checkRightsOr('group', [CREATE, UPDATE]);
-Session::checkRight('user', User::UPDATEAUTHENT);
-AuthLDAP::manageRequestValues(false);
-
-Html::header(__('LDAP directory link'), '', "admin", "group", "ldap");
-
-$authldap = new AuthLDAP();
-$authldap->getFromDB($_REQUEST['authldaps_id'] ?? 0);
-AuthLDAP::showGroupImportForm($authldap,
-    $_GET['mode'] ?? 0);
-
-if (
-    (isset($_REQUEST['authldaps_id']) && ((int) $_REQUEST['authldaps_id'] > 0))
-    && (isset($_REQUEST['search']) || isset($_REQUEST['start']) || isset($_REQUEST['glpilist_limit']))
-) {
-    AuthLDAP::showLdapGroups(
-        $_REQUEST['start'] ?? 0,
-        $_REQUEST["ldap_group_filter"] ?? '',
-        $_REQUEST["ldap_group_filter2"] ?? '',
-        $_SESSION["glpiactive_entity"],
-            $_REQUEST['mode'] ?? 0,
-    );
+/* Add `sync_field_group` to glpi_authldaps */
+if (!$DB->fieldExists('glpi_authldaps', 'sync_field_group')) {
+    $migration->addField('glpi_authldaps', 'sync_field_group', "varchar(255) DEFAULT NULL");
 }
-
-Html::footer();
+/* Add `glpi_groups` to sync_field_group */
+if (!$DB->fieldExists('glpi_groups', 'sync_field_group')) {
+    $migration->addField('glpi_groups', 'sync_field_group', "varchar(255) DEFAULT NULL");
+}

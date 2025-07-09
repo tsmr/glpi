@@ -35,12 +35,16 @@
       <div class="col-12 col-xxl-5">
          <div class="card">
             <div class="card-header">
-               <h3>{{ __('Bulk import groups from a LDAP directory') }}</h3>
+               <h3>{{ __('Bulk import or synchronize groups from a LDAP directory') }}</h3>
             </div>
             <div class="list-group list-group-flush">
-               <a class="list-group-item list-group-item-action" href="{{ path('front/ldap.group.import.php') }}">
+               <a class="list-group-item list-group-item-action" href="{{ path('front/ldap.group.import.php') }}?mode=0">
                   <i class="ti ti-users me-1"></i>
                   <span>{{ __('Import of new groups') }}</span>
+               </a>
+               <a class="list-group-item list-group-item-action" href="{{ path('front/ldap.group.import.php') }}?mode=1">
+                  <i class="ti ti-user-cog me-1"></i>
+                  <span>{{ __('Synchronizing already imported groups') }}</span>
                </a>
             </div>
          </div>

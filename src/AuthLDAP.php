@@ -207,6 +207,7 @@ class AuthLDAP extends CommonDBTM
         $this->fields['condition']                   = '';
         $this->fields['login_field']                 = 'uid';
         $this->fields['sync_field']                  = null;
+        $this->fields['sync_field_group']            = null;
         $this->fields['use_tls']                     = 0;
         $this->fields['group_field']                 = '';
         $this->fields['group_condition']             = '';
@@ -251,6 +252,7 @@ class AuthLDAP extends CommonDBTM
                  = '(&(objectClass=user)(objectCategory=person)(!(userAccountControl:1.2.840.113556.1.4.803:=2)))';
                 $this->fields['login_field']               = 'samaccountname';
                 $this->fields['sync_field']                = 'objectguid';
+                $this->fields['sync_field_group']          = 'objectguid';
                 $this->fields['use_tls']                   = 0;
                 $this->fields['group_field']               = 'memberof';
                 $this->fields['group_condition']
@@ -282,6 +284,7 @@ class AuthLDAP extends CommonDBTM
                 $this->fields['condition']                 = '(objectClass=inetOrgPerson)';
                 $this->fields['login_field']               = 'uid';
                 $this->fields['sync_field']                = 'entryuuid';
+                $this->fields['sync_field_group']          = 'entryuuid';
                 $this->fields['use_tls']                   = 0;
                 $this->fields['group_field']               = '';
                 $this->fields['group_condition']           = '(objectClass=inetOrgPerson)';
@@ -395,6 +398,7 @@ class AuthLDAP extends CommonDBTM
 
         switch ($ma->getAction()) {
             case 'import_group':
+            case 'sync_group':
                 $group = new Group();
                 if (
                     !Session::haveRight("user", User::UPDATEAUTHENT)
@@ -1317,6 +1321,19 @@ TWIG, ['authldaps_id' => $ID]);
         return (!empty($this->fields['sync_field']));
     }
 
+
+    /**
+     * Indicates if there's a sync_field_group enabled in the LDAP configuration
+     * @since 10.12
+     *
+     * @return boolean true if the sync_field_group is enabled (the field is filled)
+     */
+    public function isSyncFieldGroupEnabled()
+    {
+        return (!empty($this->fields['sync_field_group']));
+    }
+
+
     /**
      * Check if the sync_field is configured for an LDAP server
      *
@@ -2099,18 +2116,19 @@ TWIG, $twig_params);
      */
     public static function showLdapGroups(
         $start,
-        $sync = 0,
         $filter = '',
         $filter2 = '',
-        $entity = 0
+        $entity = 0,
+        $sync = 0,
     ) {
         $limitexceeded = false;
-        $ldap_groups   = self::getAllGroups(
+        $ldap_groups   = self::getGroups(
             $_REQUEST['authldaps_id'],
             $filter,
             $filter2,
             $entity,
-            $limitexceeded
+            $limitexceeded,
+            $sync,
         );
         $total_results = count($ldap_groups);
 
@@ -2123,6 +2141,13 @@ TWIG, $twig_params);
         if ($start > 0) {
             array_splice($ldap_groups, 0, $start);
         }
+        if ($sync) {
+            $textbutton  = _x('button', 'Synchronize');
+            $form_action = __CLASS__ . MassiveAction::CLASS_ACTION_SEPARATOR . 'sync_group';
+        } else {
+            $textbutton  = _x('button', 'Import');
+            $form_action = __CLASS__ . MassiveAction::CLASS_ACTION_SEPARATOR . 'import_group';
+        }
 
         $dn_index = 1;
         $entries = [];
@@ -2134,6 +2159,7 @@ TWIG, $twig_params);
             $group       = $groupinfos["cn"];
             $group_dn    = $groupinfos["dn"];
             $search_type = $groupinfos["search_type"];
+            $sync_group_field = $groupinfos["sync_field_group"] ?? "";
             $group_cell = '';
             $group_cell .= Html::hidden("dn[$dn_index]", [
                 'value'                 => $group_dn,
@@ -2152,6 +2178,7 @@ TWIG, $twig_params);
             $group_cell .= htmlescape($group);
             $entry['group'] = $group_cell;
             $entry['group_dn'] = $group_dn;
+            $entry['sync_field_group'] = $sync_group_field;
             if (Session::isMultiEntitiesMode()) {
                 $entry['entity'] = Entity::dropdown([
                     'value'         => $entity,
@@ -2205,7 +2232,7 @@ TWIG, $twig_params);
                 'num_displayed' => count($entries),
                 'container'     => 'mass' . self::class . mt_rand(),
                 'specific_actions' => [
-                    __CLASS__ . MassiveAction::CLASS_ACTION_SEPARATOR . 'import_group' => _sx('button', 'Import'),
+                    $form_action => $textbutton,
                 ],
                 'extraparams' => [
                     'authldaps_id' => $_REQUEST['authldaps_id'],
@@ -2300,24 +2327,6 @@ TWIG, $twig_params);
             if (!empty($infos)) {
                 $glpi_groups = [];
 
-                //Get all groups from GLPI DB for the current entity and the subentities
-                $iterator = $DB->request([
-                    'SELECT' => ['ldap_group_dn','ldap_value'],
-                    'FROM'   => 'glpi_groups',
-                    'WHERE'  => getEntitiesRestrictCriteria('glpi_groups'),
-                ]);
-
-                //If the group exists in DB -> unset it from the LDAP groups
-                foreach ($iterator as $group) {
-                    //use DN for next step
-                    //depending on the type of search when groups are imported
-                    //the DN may be in two separate fields
-                    if (!empty($group["ldap_group_dn"])) {
-                        $glpi_groups[$group["ldap_group_dn"]] = 1;
-                    } elseif (!empty($group["ldap_value"])) {
-                        $glpi_groups[$group["ldap_value"]] = 1;
-                    }
-                }
                 $ligne = 0;
 
                 foreach ($infos as $dn => $info) {
@@ -2326,6 +2335,10 @@ TWIG, $twig_params);
                         $groups[$ligne]["dn"]          = $dn;
                         $groups[$ligne]["cn"]          = $info["cn"];
                         $groups[$ligne]["search_type"] = $info["search_type"];
+                        $sync_field = $config_ldap->isSyncFieldGroupEnabled() ? $config_ldap->fields['sync_field_group'] : null;
+                        if (!is_null($sync_field)) {
+                            $groups[$ligne][$sync_field] = self::getFieldValue($info, $sync_field);
+                        }
                         $ligne++;
                     }
                 }
@@ -2375,6 +2388,43 @@ TWIG, $twig_params);
         return $v[0]["cn"][0];
     }
 
+
+    /**
+     * Get the group's cn by giving his DN
+     *
+     * @param resource $ldap_connection ldap connection to use
+     * @param string   $group_dn        the group's dn
+     *
+     * @return string the group cn
+     */
+    public static function getGroupSyncFieldByDn($ldap_connection, $group_dn, $syncfield)
+    {
+
+        $sr = @ldap_read($ldap_connection, $group_dn, "objectClass=*", [$syncfield]);
+        if ($sr === false) {
+            // 32 = LDAP_NO_SUCH_OBJECT => This error can be silented as it just means that search produces no result.
+            if (ldap_errno($ldap_connection) !== 32) {
+                trigger_error(
+                    static::buildError(
+                        $ldap_connection,
+                        sprintf(
+                            'Unable to get LDAP group having DN `%s`',
+                            $group_dn
+                        )
+                    ),
+                    E_USER_WARNING
+                );
+            }
+            return false;
+        }
+        $v  = self::get_entries_clean($ldap_connection, $sr);
+        if (!is_array($v) || (count($v) == 0) || empty($v[0][$syncfield])) {
+            return false;
+        }
+        return self::getFieldValue($v[0], $syncfield);
+        ;
+    }
+
     /**
      * Set groups from ldap
      *
@@ -2403,7 +2453,10 @@ TWIG, $twig_params);
         //First look for groups in group objects
         $extra_attribute = ($search_in_groups ? "cn" : $config_ldap->fields["group_field"]);
         $attrs           = ["dn", $extra_attribute];
-
+        $sync_field = $config_ldap->isSyncFieldGroupEnabled() ? $config_ldap->fields['sync_field_group'] : null;
+        if (!is_null($sync_field)) {
+            $attrs           = ["dn", $extra_attribute,$sync_field];
+        }
         if ($filter === '') {
             if ($search_in_groups) {
                 $filter = (!empty($config_ldap->fields['group_condition'])
@@ -2496,6 +2549,9 @@ TWIG, $twig_params);
                         $groups[$infos[$ligne]["dn"]] = (["cn" => $infos[$ligne]["cn"][0],
                             "search_type" => "groups",
                         ]);
+                        if (!is_null($sync_field)) {
+                            $groups[$infos[$ligne]["dn"]][$sync_field] = $infos[$ligne][$sync_field];
+                        }
                     }
                 } else {
                     if (isset($infos[$ligne][$extra_attribute])) {
@@ -2540,6 +2596,13 @@ TWIG, $twig_params);
                                     "search_type"
                                          => "users",
                                 ];
+                                if (!is_null($sync_field)) {
+                                    $groups[$infos[$ligne][$extra_attribute][$ligne_extra]][$sync_field] = self::getGroupSyncFieldByDn(
+                                        $ldap_connection,
+                                        $infos[$ligne][$extra_attribute][$ligne_extra],
+                                        $sync_field
+                                    );
+                                }
                             }
                         }
                     }
@@ -2781,21 +2844,85 @@ TWIG, $twig_params);
         // Connect to the directory
         $ds = $config_ldap->connect();
         if ($ds) {
-            $group_infos = self::getGroupByDn($ds, $group_dn);
+            $attrs = ['cn'];
+            if (!empty($config_ldap->fields['sync_field_group'])) {
+                $attrs[] = $config_ldap->fields['sync_field_group'];
+            }
+            $group_infos = self::getGroupByDn($ds, Sanitizer::unsanitize($group_dn), $attrs);
             $group       = new Group();
-            if ($options['type'] === "groups") {
-                return $group->add(["name"          => $group_infos["cn"][0],
-                    "ldap_group_dn" => $group_infos["dn"],
-                    "entities_id"   => $options['entities_id'],
-                    "is_recursive"  => $options['is_recursive'],
+            $syncfield = self::getFieldValue($group_infos, $config_ldap->fields['sync_field_group']);
+            if (
+                (isset($config_ldap->fields['sync_field_group'])
+                    && !empty($config_ldap->fields['sync_field_group'])
+                    && !empty($syncfield)
+                    && $group->getFromDBByCrit(['sync_field_group' => $syncfield ]))
+            ) {
+                if ($options['type'] == "groups") {
+                    return $group->update(Sanitizer::sanitize([
+                        "id"               => $group->getID(),
+
+                        "ldap_group_dn"    => $group_infos["dn"],
+                        "sync_field_group" => $syncfield,
+                        "entities_id"      => $options['entities_id'],
+                        "is_recursive"     => $options['is_recursive'],
+                    ]));
+                }
+                return $group->update(Sanitizer::sanitize([
+                    "id"               => $group->getID(),
+
+                    "ldap_field"       => $config_ldap->fields["group_field"],
+                    "ldap_value"       => $group_infos["dn"],
+                    "sync_field_group" => $syncfield,
+                    "entities_id"      => $options['entities_id'],
+                    "is_recursive"     => $options['is_recursive'],
+                ]));
+            } else {
+                if ($options['type'] == "groups") {
+                    if ($group->getFromDBByCrit(['ldap_group_dn' => addslashes($group_infos["dn"])])) {
+                        return $group->update(Sanitizer::sanitize([
+                            "id"               => $group->getID(),
+
+                            "ldap_group_dn"    => $group_infos["dn"],
+                            "sync_field_group" => $syncfield,
+                            "entities_id"      => $options['entities_id'],
+                            "is_recursive"     => $options['is_recursive'],
+                        ]));
+                    }
+                    return $group->add(Sanitizer::sanitize([
+                        "name"             => $group_infos["cn"][0],
+                        "ldap_group_dn"    => $group_infos["dn"],
+                        "sync_field_group" => $syncfield,
+                        "entities_id"      => $options['entities_id'],
+                        "is_recursive"     => $options['is_recursive'],
+                        "is_assign"        => 0,
+                        "is_task"          => 0,
+                        "is_notify"        => 0,
+                        "is_manager"       => 0,
+                    ]));
+                }
+                if ($group->getFromDBByCrit(['ldap_value' => addslashes($group_infos["dn"])])) {
+                    return $group->update(Sanitizer::sanitize([
+                        "id"               => $group->getID(),
+                        "ldap_field"       => $config_ldap->fields["group_field"],
+                        "ldap_value"       => $group_infos["dn"],
+                        "sync_field_group" => $syncfield,
+                        "entities_id"      => $options['entities_id'],
+                        "is_recursive"     => $options['is_recursive'],
+                    ]));
+                }
+                return $group->add([
+                    "name"             => $group_infos["cn"][0],
+                    "ldap_field"       => $config_ldap->fields["group_field"],
+                    "ldap_value"       => $group_infos["dn"],
+                    "sync_field_group" => $syncfield,
+                    "entities_id"      => $options['entities_id'],
+                    "is_recursive"     => $options['is_recursive'],
+                    "is_assign"        => 0,
+                    "is_task"          => 0,
+                    "is_notify"        => 0,
+                    "is_manager"       => 0,
                 ]);
             }
-            return $group->add(["name"         => $group_infos["cn"][0],
-                "ldap_field"   => $config_ldap->fields["group_field"],
-                "ldap_value"   => $group_infos["dn"],
-                "entities_id"  => $options['entities_id'],
-                "is_recursive" => $options['is_recursive'],
-            ]);
         }
         return false;
     }
@@ -3505,9 +3632,9 @@ TWIG, $twig_params);
      *
      * @return array|boolean group infos if found, else false
      */
-    public static function getGroupByDn($ds, $group_dn)
+    public static function getGroupByDn($ds, $group_dn, $attrs = ['cn'])
     {
-        return self::getObjectByDn($ds, "objectClass=*", $group_dn, ["cn"]);
+        return self::getObjectByDn($ds, "objectClass=*", $group_dn, $attrs);
     }
 
     /**
@@ -3682,7 +3809,7 @@ TWIG, $twig_params);
      *
      * @return void
      */
-    public static function showGroupImportForm(AuthLDAP $authldap)
+    public static function showGroupImportForm(AuthLDAP $authldap, $mode = 0)
     {
         // Get data related to entity (directory and ldap filter)
         $authldap->getFromDB($_REQUEST['authldaps_id']);
@@ -3690,6 +3817,7 @@ TWIG, $twig_params);
         TemplateRenderer::getInstance()->display('pages/admin/ldap.group_criteria.html.twig', [
             'has_multiple_servers' => self::getNumberOfServers() > 1,
             'authldap'             => $authldap,
+            'mode'             => $mode,
         ]);
     }
 
@@ -4084,6 +4212,34 @@ TWIG, $twig_params);
         return false;
     }
 
+
+    /**
+     * Does LDAP group already exists in the database?
+     *
+     * @param string  $name          User login/name
+     * @param array $existing_dn   Existing DN in databse
+     * @param ?string $sync          Sync field
+     *
+     * @return false|User
+     */
+    public function getLdapExistingGroup($name, $existing_dn, $sync = null)
+    {
+        global $DB;
+        $group = new Group();
+
+        if ($sync !== null && $group->getFromDBbySyncField($DB->escape($sync))) {
+            return true;
+        }
+
+        if (isset($existing_dn[strtolower($name)])) {
+            return true;
+        }
+
+        return false;
+    }
+
+
+
     /**
      * Is synchronisation field used for current server
      *
@@ -4103,6 +4259,27 @@ TWIG, $twig_params);
         );
         return $count > 0;
     }
+
+
+    /**
+     * Is synchronisation field used for current server
+     *
+     * @return boolean
+     */
+    public function isSyncFieldGroupUsed()
+    {
+        if ($this->getID() <= 0) {
+            return false;
+        }
+        $count = countElementsInTable(
+            'glpi_groups',
+            [
+                'NOT'       => ['sync_field_group' => null],
+            ]
+        );
+        return $count > 0;
+    }
+
 
     /**
      * Get a LDAP field value
@@ -4291,6 +4468,97 @@ TWIG, $twig_params);
 
         return $users;
     }
+
+
+    /**
+     * Get the list of LDAP group to add/synchronize
+     * When importing, already existing groups will be filtered
+     *
+     * @param integer  $auths_id  ID of the server to use
+     * @param string  $filter  ldap filter to use (default '')
+     * @param string  $filter2 second ldap filter to use (which case?) (default '')
+     * @param integer $entity  working entity
+     * @param string  $order   display order (default DESC)
+     * @param array   $results       result stats
+     * @param boolean $limitexceeded limit exceeded exception
+     *
+     * @return array
+     */
+    public static function getGroups(
+        $auths_id,
+        $filter,
+        $filter2,
+        $entity,
+        &$limitexceeded,
+        $sync = 0,
+    ) {
+        global $DB;
+        //        $users = [];
+        $ldap_groups    = self::getAllGroups(
+            $auths_id,
+            $filter,
+            $filter2,
+            $entity,
+            $limitexceeded,
+        );
+
+        $config_ldap   = new AuthLDAP();
+        $config_ldap->getFromDB($auths_id);
+
+        if (!is_array($ldap_groups) || count($ldap_groups) == 0) {
+            return $ldap_groups;
+        }
+
+
+        $sync_field = $config_ldap->isSyncFieldGroupEnabled() ? $config_ldap->fields['sync_field_group'] : null;
+        $glpi_groups = [];
+        //Get all groups from GLPI DB for the current entity and the subentities
+        $iterator = $DB->request([
+            'SELECT' => ['ldap_group_dn','ldap_value'],
+            'FROM'   => 'glpi_groups',
+            'WHERE'  => getEntitiesRestrictCriteria('glpi_groups'),
+        ]);
+
+        //If the group exists in DB -> unset it from the LDAP groups
+        foreach ($iterator as $group) {
+            //use DN for next step
+            //depending on the type of search when groups are imported
+            //the DN may be in two separate fields
+            if (isset($group["ldap_group_dn"]) && !empty($group["ldap_group_dn"])) {
+                $glpi_groups[strtolower($group["ldap_group_dn"])] = 1;
+            } elseif (isset($group["ldap_value"]) && !empty($group["ldap_value"])) {
+                $glpi_groups[$group["ldap_value"]] = 1;
+            }
+        }
+        $groups = [];
+        $ligne = 0;
+        foreach ($ldap_groups as $groupinfos) {
+
+            $group_sync_field = $config_ldap->isSyncFieldGroupEnabled() && isset($groupinfos[$sync_field])
+                ? self::getFieldValue($groupinfos, $sync_field)
+                : null;
+
+            $group = $config_ldap->getLdapExistingGroup(
+                $groupinfos['dn'],
+                $glpi_groups,
+                $group_sync_field
+            );
+            if (!$sync && $group || $sync && !$group) {
+                continue;
+            }
+
+            $groups[$ligne]["dn"]          = $groupinfos['dn'];
+            $groups[$ligne]["cn"]          = $groupinfos["cn"];
+            $groups[$ligne]["search_type"] = $groupinfos["search_type"];
+            if (!is_null($group_sync_field)) {
+                $groups[$ligne]["sync_field_group"] = $group_sync_field;
+            }
+            $ligne++;
+        }
+
+        return $groups;
+    }
+
 
     public function checkFilesExist(&$input)
     {
