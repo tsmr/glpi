@@ -225,6 +225,27 @@ class AuthLDAPTest extends DbTestCase
         $ldap->method('isSyncFieldUsed')->willReturn(false);
         $result = $ldap->prepareInputForUpdate($input);
         $this->assertArrayHasKey('sync_field', $result);
+
+        $input['sync_field_group'] = 'sync_field_group';
+        $result = $ldap->prepareInputForUpdate($input);
+        $this->assertSame('sync_field_group', $result['sync_field_group']);
+
+        //test sync_field_group update
+        $ldap->fields['sync_field_group'] = 'sync_field_group';
+        $result = $ldap->prepareInputForUpdate($input);
+        $this->assertArrayNotHasKey('sync_field_group', $result);
+
+        $input['sync_field_group'] = 'another_field';
+        $result = $ldap->prepareInputForUpdate($input);
+        $this->assertFalse($result);
+        $this->hasSessionMessages(ERROR, ['Synchronization field cannot be changed once in use.']);
+
+        $ldap = $this->getMockBuilder(\AuthLDAP::class)
+            ->onlyMethods(['isSyncFieldGroupUsed'])
+            ->getMock();
+        $ldap->method('isSyncFieldGroupUsed')->willReturn(false);
+        $result = $ldap->prepareInputForUpdate($input);
+        $this->assertArrayHasKey('sync_field_group', $result);
     }
 
     public function testgetGroupSearchTypeName()
@@ -870,6 +891,32 @@ class AuthLDAPTest extends DbTestCase
         $this->assertSame('glpi2-group2', $cn);
     }
 
+    #[RequiresPhpExtension('ldap')]
+    public function testGetGroupSyncFieldByDn()
+    {
+        $ldap = $this->ldap;
+
+        $connection = $ldap->connect();
+        $this->checkLdapConnection($connection);
+
+        // Invalid group
+        $cn = \AuthLDAP::getGroupSyncFieldByDn($connection, 'ou=not,ou=exists,dc=glpi,dc=org', '123456789');
+        $this->assertFalse($cn);
+
+        // Valid group with no special chars
+        $cn = \AuthLDAP::getGroupSyncFieldByDn($connection, 'cn=glpi2-group1,ou=groups,ou=usa,ou=ldap2,dc=glpi,dc=org', '123456789');
+        $this->assertSame('glpi2-group1', $cn);
+
+        // OU with special `#` char protected by a `\`
+        $cn = \AuthLDAP::getGroupSyncFieldByDn($connection, 'cn=glpi2-group2,ou=groups,ou=\#1-test,ou=ldap2,dc=glpi,dc=org', '1234567891');
+        $this->assertSame('glpi2-group2', $cn);
+
+        // OU with special `#` char escaped to `\23`
+        $cn = \AuthLDAP::getGroupSyncFieldByDn($connection, 'cn=glpi2-group2,ou=groups,ou=\231-test,ou=ldap2,dc=glpi,dc=org', '1234567891');
+        $this->assertSame('glpi2-group2', $cn);
+    }
+
+
     /**
      * Test get user by dn
      *
@@ -900,6 +947,7 @@ class AuthLDAPTest extends DbTestCase
             'user_uid'            => 'remi',
             'expected_group_dn'   => 'cn=glpi2-group1,ou=groups,ou=usa,ou=ldap2,dc=glpi,dc=org',
             'expected_group_name' => 'glpi2-group1',
+            'expected_sync_field' => '123456789',
         ];
 
         // OU with special `#` char protected by a `\`
@@ -909,6 +957,7 @@ class AuthLDAPTest extends DbTestCase
             // openladap replaces `\#` by `\23` (23 is the ascii code for #)
             'expected_group_dn'   => 'cn=glpi2-group2,ou=groups,ou=\231-test,ou=ldap2,dc=glpi,dc=org',
             'expected_group_name' => 'glpi2-group2',
+            'expected_sync_field' => '1234567891',
         ];
 
         // OU with special `#` char escaped to `\23`
@@ -917,6 +966,7 @@ class AuthLDAPTest extends DbTestCase
             'user_uid'            => 'specialchar2',
             'expected_group_dn'   => 'cn=glpi2-group2,ou=groups,ou=\231-test,ou=ldap2,dc=glpi,dc=org',
             'expected_group_name' => 'glpi2-group2',
+            'expected_sync_field' => '1234567891',
         ];
     }
 

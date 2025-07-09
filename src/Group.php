@@ -942,6 +942,18 @@ class Group extends CommonTreeDropdown
         return $this->getLink();
     }
 
+    /**
+     * Retrieve a group from the database using value of the sync field.
+     *
+     * @param string $value Value of the sync field
+     *
+     * @return boolean
+     */
+    public function getFromDBbySyncField($value)
+    {
+        return $this->getFromDBByCrit(['sync_field_group' => $value]);
+    }
+
     public function post_addItem()
     {
         parent::post_addItem();

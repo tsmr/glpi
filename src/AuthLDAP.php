@@ -2422,7 +2422,6 @@ TWIG, $twig_params);
             return false;
         }
         return self::getFieldValue($v[0], $syncfield);
-        ;
     }
 
     /**

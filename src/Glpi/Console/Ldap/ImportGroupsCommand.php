@@ -42,6 +42,7 @@ use Symfony\Component\Console\Helper\Table;
 use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Input\InputOption;
 use Symfony\Component\Console\Output\OutputInterface;
+use \Symfony\Component\Console\Exception;
 use Group;
 use Toolbox;
 
@@ -53,7 +54,7 @@ class ImportGroupsCommand extends AbstractCommand
      * @var integer
      * @FIXME Remove in GLPI 10.1.
      */
-    const ERROR_LDAP_CONNECTION_FAILED = 1;
+    public const ERROR_LDAP_CONNECTION_FAILED = 1;
 
     /**
      * Error code returned if LDAP limit exceeded.
@@ -61,7 +62,7 @@ class ImportGroupsCommand extends AbstractCommand
      * @var integer
      * @FIXME Remove in GLPI 10.1.
      */
-    const ERROR_LDAP_LIMIT_EXCEEDED = 2;
+    public const ERROR_LDAP_LIMIT_EXCEEDED = 2;
 
     protected function configure()
     {
@@ -142,7 +143,7 @@ class ImportGroupsCommand extends AbstractCommand
             $actions = [
                 AuthLDAP::ACTION_IMPORT, // Import unexisting users
             ];
-        } else if ($only_update) {
+        } elseif ($only_update) {
             $actions = [
                 AuthLDAP::ACTION_SYNCHRONIZE, // Update existing users but does not handle deleted ones
             ];
@@ -204,7 +205,7 @@ class ImportGroupsCommand extends AbstractCommand
         foreach ($servers_id as $server_id) {
             $server = new AuthLDAP();
             if (!$server->getFromDB($server_id)) {
-                throw new \Symfony\Component\Console\Exception\RuntimeException(__('Unable to load LDAP server information.'));
+                throw new RuntimeException(__('Unable to load LDAP server information.'));
             }
             $sync_field = $server->isSyncFieldGroupEnabled() ? $server->fields['sync_field_group'] : null;
             if (!$server->isActive()) {
@@ -287,7 +288,7 @@ class ImportGroupsCommand extends AbstractCommand
                 $is_recursive = 0;
                 $options = ['authldaps_id' => $server_id,
                     'entities_id' => $entity,
-                    'is_recursive' => $is_recursive
+                    'is_recursive' => $is_recursive,
                 ];
 
                 switch ($server->fields["group_search_type"]) {
@@ -300,11 +301,11 @@ class ImportGroupsCommand extends AbstractCommand
                         break;
                 }
                 $glpi_groups = [];
-//Get all groups from GLPI DB for the current entity and the subentities
+                //Get all groups from GLPI DB for the current entity and the subentities
                 $iterator = $DB->request([
                     'SELECT' => ['ldap_group_dn','ldap_value'],
                     'FROM'   => 'glpi_groups',
-                    'WHERE'  => getEntitiesRestrictCriteria('glpi_groups')
+                    'WHERE'  => getEntitiesRestrictCriteria('glpi_groups'),
                 ]);
 
                 //If the group exists in DB -> unset it from the LDAP groups
@@ -314,7 +315,7 @@ class ImportGroupsCommand extends AbstractCommand
                     //the DN may be in two separate fields
                     if (isset($group["ldap_group_dn"]) && !empty($group["ldap_group_dn"])) {
                         $glpi_groups[$group["ldap_group_dn"]] = 1;
-                    } else if (isset($group["ldap_value"]) && !empty($group["ldap_value"])) {
+                    } elseif (isset($group["ldap_value"]) && !empty($group["ldap_value"])) {
                         $glpi_groups[$group["ldap_value"]] = 1;
                     }
                 }
@@ -382,8 +383,8 @@ class ImportGroupsCommand extends AbstractCommand
                             'SELECT' => ['id', 'ldap_group_dn', 'ldap_value'],
                             'FROM' => 'glpi_groups',
                             'WHERE' => [
-                                'is_assign'     => 0
-                            ] + getEntitiesRestrictCriteria('glpi_groups', '', $entity)
+                                'is_assign'     => 0,
+                            ] + getEntitiesRestrictCriteria('glpi_groups', '', $entity),
                         ]);
 
                         //If the group exists in DB -> unset it from the LDAP groups
